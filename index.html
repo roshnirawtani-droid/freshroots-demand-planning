@@ -18,6 +18,8 @@ nav a{color:#fff;margin-right:14px}h2{margin:0 0 8px;font-size:16px}.note{color:
 <nav><a href="Freshroots_Demand_Planning_Engine.xlsx">Download Excel</a><a href="SOLUTION.md">Solution doc</a><a href="Freshroots_Component_Map.svg">Component map</a></nav></header>
 <main>
 <div class="card"><h2>Rules (editable)</h2><div class="rules" id="rules"></div><p class="note" id="ctx"></p></div>
+<div class="card"><h2>Load a fresh SAP export (optional)</h2><p class="note">Upload any of the five CSVs (same columns as the seed files) to re-run the engine on new data. Nothing is sent anywhere; it runs in your browser.</p>
+<div class="rules"><div><label>weekly_sales.csv</label><input type="file" accept=".csv" data-up="sales"></div><div><label>current_inventory.csv</label><input type="file" accept=".csv" data-up="inv"></div><div><label>sku_master.csv</label><input type="file" accept=".csv" data-up="sku"></div><div><label>calendar.csv</label><input type="file" accept=".csv" data-up="cal"></div><div><label>distributor_master.csv</label><input type="file" accept=".csv" data-up="dist"></div></div><p class="note" id="upmsg"></p></div>
 <div class="card"><h2>Summary</h2><div class="kpis" id="kpis"></div></div>
 <div class="card"><h2>Recommendations</h2><div class="tw"><table id="rec"></table></div>
 <p class="note">Flagged SKUs release 0 units until Raghav picks Approve / Modify / Reject. Override quantity is optional.</p></div>
@@ -62,6 +64,7 @@ function render(){
  document.getElementById('po').innerHTML='<tr>'+PH.map((h,i)=>'<th class="'+(i<3?'l':'')+'">'+h+'</th>').join('')+'</tr>'+ds.map(id=>{const m=rows.filter(r=>r.dist===id),d=D.dist.find(x=>x.Distributor_ID===id);
   return '<tr><td class="l">'+id+'</td><td class="l">'+d.Distributor_Name+'</td><td class="l">'+d.Region+'</td><td>'+m.filter(r=>r.rec>0).length+'</td><td>'+m.reduce((a,r)=>a+r.rec,0)+'</td><td>'+m.filter(r=>!r.flag).reduce((a,r)=>a+r.rec,0)+'</td><td>'+m.filter(r=>r.os).length+'</td><td>'+m.filter(r=>r.flag&&!r.d).length+'</td><td>'+m.reduce((a,r)=>a+r.fin,0)+'</td></tr>'}).join('');
 }
+document.addEventListener('change',async e=>{const u=e.target.dataset.up;if(u&&e.target.files[0]){try{D[u]=csv(await e.target.files[0].text());dec={};ovr={};render();document.getElementById('upmsg').textContent='Loaded '+e.target.files[0].name+' ('+D[u].length+' rows).'}catch(x){document.getElementById('upmsg').textContent='Could not use that file: '+x.message}}});
 document.addEventListener('change',e=>{const t=e.target,id=t.dataset.id;if(id){(t.dataset.k==='d'?dec:ovr)[id]=t.value;render()}});
 (async()=>{
  const g=async n=>csv(await (await fetch('data/'+n+'.csv')).text());
