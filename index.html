@@ -1,0 +1,74 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Freshroots Demand Planning Engine</title>
+<style>
+:root{--bg:#f6f8f6;--card:#fff;--ink:#1c2a24;--mut:#5b6b63;--br:#d7dfda}
+@media(prefers-color-scheme:dark){:root{--bg:#121a16;--card:#1b2620;--ink:#e6efe9;--mut:#9bb0a5;--br:#2f3f37}}
+body{margin:0;font:14px/1.45 system-ui,Arial,sans-serif;background:var(--bg);color:var(--ink)}
+header{padding:16px;background:#1f4e3d;color:#fff}header h1{margin:0;font-size:20px}header p{margin:4px 0 8px;opacity:.85}
+main{padding:16px;max-width:1400px;margin:auto}
+.card{background:var(--card);border:1px solid var(--br);border-radius:8px;padding:12px;margin-bottom:16px}
+.kpis{display:flex;flex-wrap:wrap;gap:10px}.kpi{flex:1 1 130px;border:1px solid var(--br);border-radius:8px;padding:8px}.kpi b{display:block;font-size:22px}
+.rules{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:8px}.rules label{font-size:12px;color:var(--mut)}.rules input{width:100%;box-sizing:border-box;padding:4px;background:#fff2cc;color:#00f;border:1px solid var(--br)}
+.tw{overflow-x:auto}table{border-collapse:collapse;width:100%;font-size:12.5px}th,td{border:1px solid var(--br);padding:5px 7px;text-align:right;white-space:nowrap}th{background:#1f4e3d;color:#fff}td.l,th.l{text-align:left}
+.s-Healthy{background:#c6efce;color:#111}.s-Overstock{background:#ffe0b2;color:#111}.s-Stockout{background:#f8cbad;color:#111}.s-High{background:#bdd7ee;color:#111}.s-YES{background:#d9c2f0;font-weight:bold;color:#111}
+td.in select,td.in input{background:#fff2cc;color:#00f;border:1px solid var(--br);width:90px}
+nav a{color:#fff;margin-right:14px}h2{margin:0 0 8px;font-size:16px}.note{color:var(--mut);font-size:12px}
+</style></head><body>
+<header><h1>Freshroots Demand Planning Engine</h1><p>Rules engine for 15 SKUs. Raghav approves exceptions, procurement approves orders.</p>
+<nav><a href="Freshroots_Demand_Planning_Engine.xlsx">Download Excel</a><a href="SOLUTION.md">Solution doc</a><a href="Freshroots_Component_Map.svg">Component map</a></nav></header>
+<main>
+<div class="card"><h2>Rules (editable)</h2><div class="rules" id="rules"></div><p class="note" id="ctx"></p></div>
+<div class="card"><h2>Summary</h2><div class="kpis" id="kpis"></div></div>
+<div class="card"><h2>Recommendations</h2><div class="tw"><table id="rec"></table></div>
+<p class="note">Flagged SKUs release 0 units until Raghav picks Approve / Modify / Reject. Override quantity is optional.</p></div>
+<div class="card"><h2>Purchase orders by distributor</h2><div class="tw"><table id="po"></table></div></div>
+</main>
+<script>
+const P={boost:.25,trig:.2,hiMult:1.5,minLo:6,maxLo:14,minHi:3,maxHi:4,recent:4,long:12};
+const LBL={boost:'Festival boost',trig:'High-demand trigger',hiMult:'High-demand reorder x',minLo:'Min weeks (low perish.)',maxLo:'Max weeks (low perish.)',minHi:'Min weeks (high perish.)',maxHi:'Max weeks (high perish.)',recent:'Recent window (wks)',long:'Long window (wks)'};
+let D,dec={},ovr={};
+const csv=t=>{const [h,...r]=t.trim().split(/\r?\n/).map(l=>l.split(','));return r.map(x=>Object.fromEntries(h.map((k,i)=>[k,x[i]])))};
+const avg=a=>a.reduce((x,y)=>x+y,0)/a.length,f=(n,d=1)=>n.toFixed(d);
+function calc(){
+ const asOf=D.inv[0].As_Of_Date,ym=asOf.slice(0,7),fest=D.cal.find(c=>c.Year_Month===ym).Is_Festival_Month==='TRUE',mult=1+(fest?P.boost:0);
+ const weeks=[...new Set(D.sales.map(s=>s.Week))].sort();
+ const rows=D.sku.map(s=>{
+  const sv=weeks.map(w=>+D.sales.find(x=>x.SKU_ID===s.SKU_ID&&x.Week===w).Units_Sold);
+  const oh=+D.inv.find(i=>i.SKU_ID===s.SKU_ID).Units_On_Hand,std=+s.Standard_Reorder_Qty;
+  const l4=avg(sv.slice(-P.recent)),a12=avg(sv.slice(-P.long)),trend=l4/a12-1,adj=a12*mult,cover=oh/adj,hp=s.Perishability==='High';
+  const mn=hp?P.minHi:P.minLo,mx=hp?P.maxHi:P.maxLo,hd=trend>P.trig,so=cover<mn,os=cover>mx;
+  const rec=os?0:hd?std*P.hiMult:so?std:0,after=(oh+rec)/adj;
+  const flag=(hd&&os)||(hd&&fest)||(rec>0&&after<mn)||(rec>0&&after>mx);
+  const status=os?'Overstock risk':hd&&so?'High demand + Stockout risk':so?'Stockout risk':hd?'High demand':'Healthy';
+  const action=os?'Pause next order':(hd||so)?'Reorder immediately':'No action';
+  const id=s.SKU_ID,d=dec[id]||'',o=ovr[id];
+  const fin=(o!==undefined&&o!=='')?+o:d==='Reject'?0:(flag&&!d)?0:rec;
+  return{id,name:s.SKU_Name.replace('Freshroots ',''),perish:s.Perishability,oh,std,l4,a12,trend,adj,cover,hd,so,os,rec,after,flag,status,action,fin,dist:s.Distributor_ID,d,o};
+ });
+ return{rows,fest,ym,asOf,mult};
+}
+function render(){
+ const {rows,fest,ym,asOf,mult}=calc();
+ document.getElementById('ctx').textContent='As-of '+asOf+' | planning month '+ym+' | festival month: '+(fest?'TRUE':'FALSE')+' | demand multiplier '+mult.toFixed(2)+'x';
+ const n=rows.length,fl=rows.filter(r=>r.flag).length,tot=rows.reduce((a,r)=>a+r.rec,0),rel=rows.filter(r=>!r.flag).reduce((a,r)=>a+r.rec,0);
+ const k=[['SKUs',n],['Stockout risk',rows.filter(r=>r.so).length],['Overstock (pause)',rows.filter(r=>r.os).length],['High demand',rows.filter(r=>r.hd).length],['Healthy',rows.filter(r=>!r.hd&&!r.so&&!r.os).length],['Sent to Raghav',fl],['Handled by rules',Math.round((1-fl/n)*100)+'%'],['Recommended units',tot],['Released pre-review',rel],['Final units to procurement',rows.reduce((a,r)=>a+r.fin,0)]];
+ document.getElementById('kpis').innerHTML=k.map(([a,b])=>'<div class="kpi">'+a+'<b>'+b+'</b></div>').join('');
+ const cls=r=>r.os?'s-Overstock':r.so?'s-Stockout':r.hd?'s-High':'s-Healthy';
+ const H=['SKU','Product','Perish.','On hand','Std qty','4-wk avg','12-wk avg','Trend','Adj demand','Wks stock','Status','Action','Rec qty','Wks after','Raghav?','Decision','Override','Final qty'];
+ document.getElementById('rec').innerHTML='<tr>'+H.map((h,i)=>'<th class="'+(i<2?'l':'')+'">'+h+'</th>').join('')+'</tr>'+rows.map(r=>
+  '<tr><td class="l">'+r.id+'</td><td class="l">'+r.name+'</td><td>'+r.perish+'</td><td>'+r.oh+'</td><td>'+r.std+'</td><td>'+f(r.l4)+'</td><td>'+f(r.a12)+'</td><td>'+(r.trend>=0?'+':'')+f(r.trend*100)+'%</td><td>'+f(r.adj)+'</td><td>'+f(r.cover,2)+'</td><td class="'+cls(r)+'">'+r.status+'</td><td class="'+cls(r)+'">'+r.action+'</td><td><b>'+r.rec+'</b></td><td>'+f(r.after,2)+'</td><td class="'+(r.flag?'s-YES':'')+'">'+(r.flag?'YES':'No')+'</td><td class="in"><select data-k="d" data-id="'+r.id+'"><option></option>'+['Approve','Modify','Reject'].map(x=>'<option'+(r.d===x?' selected':'')+'>'+x+'</option>').join('')+'</select></td><td class="in"><input type="number" min="0" value="'+(r.o===undefined?'':r.o)+'" data-k="o" data-id="'+r.id+'"></td><td><b>'+r.fin+'</b></td></tr>').join('');
+ const ds=[...new Set(D.sku.map(s=>s.Distributor_ID))].sort();
+ const PH=['Distributor','Name','Region','SKUs to reorder','Recommended','Released pre-review','SKUs paused','Awaiting Raghav','Final units'];
+ document.getElementById('po').innerHTML='<tr>'+PH.map((h,i)=>'<th class="'+(i<3?'l':'')+'">'+h+'</th>').join('')+'</tr>'+ds.map(id=>{const m=rows.filter(r=>r.dist===id),d=D.dist.find(x=>x.Distributor_ID===id);
+  return '<tr><td class="l">'+id+'</td><td class="l">'+d.Distributor_Name+'</td><td class="l">'+d.Region+'</td><td>'+m.filter(r=>r.rec>0).length+'</td><td>'+m.reduce((a,r)=>a+r.rec,0)+'</td><td>'+m.filter(r=>!r.flag).reduce((a,r)=>a+r.rec,0)+'</td><td>'+m.filter(r=>r.os).length+'</td><td>'+m.filter(r=>r.flag&&!r.d).length+'</td><td>'+m.reduce((a,r)=>a+r.fin,0)+'</td></tr>'}).join('');
+}
+document.addEventListener('change',e=>{const t=e.target,id=t.dataset.id;if(id){(t.dataset.k==='d'?dec:ovr)[id]=t.value;render()}});
+(async()=>{
+ const g=async n=>csv(await (await fetch('data/'+n+'.csv')).text());
+ D={sales:await g('weekly_sales'),inv:await g('current_inventory'),sku:await g('sku_master'),cal:await g('calendar'),dist:await g('distributor_master')};
+ const R=document.getElementById('rules');
+ R.innerHTML=Object.keys(P).map(k=>'<div><label>'+LBL[k]+'</label><input type="number" step="any" value="'+P[k]+'" data-r="'+k+'"></div>').join('');
+ R.addEventListener('input',e=>{const k=e.target.dataset.r;if(k&&e.target.value!==''){P[k]=+e.target.value;render()}});
+ render();
+})();
+</script></body></html>
